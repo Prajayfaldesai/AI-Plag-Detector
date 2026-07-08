@@ -23,7 +23,10 @@ export default function App() {
         method: 'POST',
         body: fd,
       })
-      if (!res.ok) throw new Error('Server error: ' + res.status)
+      if (!res.ok) {
+        const body = await res.text()
+        throw new Error(`Server error ${res.status}: ${body}`)
+      }
       const data = await res.json()
       setResult(data)
     } catch (err) {
@@ -49,6 +52,9 @@ export default function App() {
 
   const stats = result?.results ? getResultStats(result.results) : null
   const overallScore = result?.aggregate?.overall_score ?? 0
+  const plagiarismScore = result?.aggregate?.plagiarism_score
+  const externalError = result?.external_error
+  const externalSource = result?.external_source
 
   const [activeNav, setActiveNav] = useState('upload')
 
@@ -151,6 +157,17 @@ export default function App() {
                     {getRiskLevel(overallScore).level} RISK
                   </span>
                 </div>
+                {plagiarismScore !== undefined && plagiarismScore !== null && (
+                  <div className="score-summary-row" style={{ marginTop: '1.25rem' }}>
+                    <strong>Plagiarism Score:</strong> {plagiarismScore}%
+                    {result.aggregate.plagiarism_label ? ` — ${result.aggregate.plagiarism_label}` : ''}
+                  </div>
+                )}
+                {externalSource && (
+                  <div className="score-summary-row" style={{ marginTop: '0.75rem', color: '#2563eb' }}>
+                    External API analysis applied.
+                  </div>
+                )}
               </div>
 
               {/* Statistics Grid */}
@@ -189,8 +206,13 @@ export default function App() {
                           </span>
                         </div>
                         <p className="para-text">{para.text.substring(0, 150)}…</p>
-                        <div className="para-footer">
+                        <div className="para-footer" style={{ display: 'grid', gap: 6 }}>
                           <small>{para.reason}</small>
+                          {para.plagiarism_score != null && (
+                            <small>
+                              Plagiarism: {para.plagiarism_score}%{para.plagiarism_label ? ` — ${para.plagiarism_label}` : ''}
+                            </small>
+                          )}
                         </div>
                       </div>
                     )
@@ -211,11 +233,21 @@ export default function App() {
           <div className="info-box">
             <h4>ℹ️ About This Tool</h4>
             <p>
-              This tool analyzes Word documents to detect AI-generated content. Results are based on advanced text analysis and optional OpenAI integration. Higher percentages indicate higher likelihood of AI generation.
+              This tool analyzes Word documents to detect AI-generated content and plagiarism using your configured backend API.
             </p>
             <p style={{ marginTop: 8, fontSize: '0.9em', color: '#666' }}>
-              Backend endpoint: <code>/analyze</code> (requires FastAPI/Flask wrapper around analyze_docx.py)
+              Backend endpoint: <code>/analyze</code> (FastAPI wrapper around analyze_docx.py).
             </p>
+            {externalError && (
+              <p style={{ marginTop: 8, color: '#b91c1c', fontWeight: 700 }}>
+                External API error: {externalError}
+              </p>
+            )}
+            {!externalError && externalSource && (
+              <p style={{ marginTop: 8, color: '#2563eb', fontWeight: 700 }}>
+                Plagiarism and AI detection data were returned from the external API.
+              </p>
+            )}
           </div>
             </>
             )}

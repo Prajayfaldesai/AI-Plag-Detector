@@ -771,6 +771,15 @@ body {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
+.score-summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.95rem;
+  color: var(--text-muted);
+}
+
 /* Footer */
 .footer {
   background: linear-gradient(135deg, var(--text) 0%, #1f2937 100%);
