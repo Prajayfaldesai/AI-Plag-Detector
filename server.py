@@ -117,6 +117,14 @@ def normalize_external_response(response: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+@app.get("/analyze")
+def analyze_info():
+    return {
+        "status": "ok",
+        "message": "Use POST /analyze with a multipart/form-data file upload to analyze a .docx document.",
+    }
+
+
 @app.post("/analyze")
 async def analyze_document(file: UploadFile = File(...)):
     if not file.filename.lower().endswith(".docx"):
