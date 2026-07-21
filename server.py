@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import requests
 from tempfile import NamedTemporaryFile
 from typing import Any, Dict, List, Optional
@@ -7,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from analyze_docx import analyze, aggregate, load_paragraphs
 
@@ -14,6 +16,15 @@ app = FastAPI(
     title="AI Plag Analyzer Backend",
     description="Accepts Word document uploads and returns AI + plagiarism analysis results.",
 )
+
+ALLOWED_PAYMENT_METHODS = {"google_pay", "phonepe"}
+
+
+class SubscribeRequest(BaseModel):
+    plan: str = "pro"
+    payment_method: str
+    phone_number: Optional[str] = None
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -37,6 +48,28 @@ def cleanup_temp_file(path: str) -> None:
         os.remove(path)
     except OSError:
         pass
+
+
+def create_razorpay_order(amount: int, receipt: str) -> Optional[Dict[str, Any]]:
+    key_id = os.getenv("RAZORPAY_KEY_ID")
+    key_secret = os.getenv("RAZORPAY_KEY_SECRET")
+    if not key_id or not key_secret:
+        return None
+
+    payload = {
+        "amount": int(amount * 100),
+        "currency": "INR",
+        "receipt": receipt,
+    }
+
+    response = requests.post(
+        "https://api.razorpay.com/v1/orders",
+        auth=(key_id, key_secret),
+        json=payload,
+        timeout=20,
+    )
+    response.raise_for_status()
+    return response.json()
 
 
 def send_text_to_external_api(text: str) -> Optional[Dict[str, Any]]:
@@ -187,6 +220,46 @@ async def analyze_document(file: UploadFile = File(...)):
         )
     finally:
         cleanup_temp_file(temp_path)
+
+
+@app.post("/subscribe")
+def subscribe(payload: SubscribeRequest):
+    payment_method = payload.payment_method.lower()
+    if payment_method not in ALLOWED_PAYMENT_METHODS:
+        raise HTTPException(status_code=400, detail="Unsupported payment method. Use google_pay or phonepe.")
+
+    if payment_method == "phonepe" and not payload.phone_number:
+        raise HTTPException(status_code=400, detail="PhonePe checkout requires a phone number.")
+
+    amount = float(os.getenv("SUBSCRIPTION_AMOUNT", "499"))
+    receipt = f"sub-{int(time.time())}"
+    checkout = create_razorpay_order(amount=amount, receipt=receipt)
+
+    if checkout:
+        return {
+            "status": "success",
+            "provider": "razorpay",
+            "message": f"Subscription request received for {payload.plan} plan using {payment_method}. Complete checkout to activate your plan.",
+            "plan": payload.plan,
+            "payment_method": payment_method,
+            "phone_number": payload.phone_number,
+            "checkout": {
+                "key": os.getenv("RAZORPAY_KEY_ID"),
+                "order_id": checkout.get("id"),
+                "amount": checkout.get("amount"),
+                "currency": checkout.get("currency"),
+                "receipt": checkout.get("receipt"),
+            },
+        }
+
+    return {
+        "status": "success",
+        "provider": "demo",
+        "message": f"Subscription request received for {payload.plan} plan using {payment_method}. Add Razorpay credentials to enable live payment checkout.",
+        "plan": payload.plan,
+        "payment_method": payment_method,
+        "phone_number": payload.phone_number,
+    }
 
 
 @app.get("/")

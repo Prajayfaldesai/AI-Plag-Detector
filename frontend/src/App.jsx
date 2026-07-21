@@ -6,6 +6,10 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
+  const [paymentMethod, setPaymentMethod] = useState('google_pay')
+  const [phoneNumber, setPhoneNumber] = useState('')
+  const [subscriptionStatus, setSubscriptionStatus] = useState(null)
+  const [subscribing, setSubscribing] = useState(false)
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -33,6 +37,99 @@ export default function App() {
       setError(err.message)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadRazorpayScript = () => {
+    return new Promise((resolve, reject) => {
+      if (typeof window === 'undefined') {
+        reject(new Error('Razorpay is only available in the browser'))
+        return
+      }
+
+      if (window.Razorpay) {
+        resolve(true)
+        return
+      }
+
+      const existing = document.querySelector('script[data-razorpay="true"]')
+      if (existing) {
+        existing.addEventListener('load', () => resolve(true))
+        existing.addEventListener('error', () => reject(new Error('Unable to load Razorpay checkout script')))
+        return
+      }
+
+      const script = document.createElement('script')
+      script.src = 'https://checkout.razorpay.com/v1/checkout.js'
+      script.async = true
+      script.dataset.razorpay = 'true'
+      script.onload = () => resolve(true)
+      script.onerror = () => reject(new Error('Unable to load Razorpay checkout script'))
+      document.body.appendChild(script)
+    })
+  }
+
+  const handleSubscribe = async (e) => {
+    e.preventDefault()
+    setSubscribing(true)
+    setError(null)
+    setSubscriptionStatus(null)
+
+    try {
+      const res = await fetch('/subscribe', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          plan: 'pro',
+          payment_method: paymentMethod,
+          phone_number: paymentMethod === 'phonepe' ? phoneNumber : undefined,
+        }),
+      })
+
+      const data = await res.json()
+      if (!res.ok) {
+        throw new Error(data.detail || 'Subscription request failed')
+      }
+
+      setSubscriptionStatus({
+        message: data.message,
+        method: data.payment_method,
+        provider: data.provider,
+      })
+
+      if (data.provider === 'razorpay' && data.checkout?.key && data.checkout?.order_id) {
+        await loadRazorpayScript()
+        const options = {
+          key: data.checkout.key,
+          amount: data.checkout.amount,
+          currency: data.checkout.currency,
+          name: 'AI Plag Detector',
+          description: `Subscription: ${data.plan}`,
+          order_id: data.checkout.order_id,
+          handler: function () {
+            setSubscriptionStatus({
+              message: 'Payment completed successfully. Your subscription is now active.',
+              method: data.payment_method,
+              provider: data.provider,
+            })
+          },
+          prefill: {
+            contact: data.phone_number || '',
+          },
+          theme: {
+            color: '#7C3AED',
+          },
+        }
+
+        const razorpayInstance = new window.Razorpay(options)
+        razorpayInstance.open()
+      }
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSubscribing(false)
     }
   }
 
@@ -238,6 +335,53 @@ export default function App() {
             <p style={{ marginTop: 8, fontSize: '0.9em', color: '#666' }}>
               Backend endpoint: <code>/analyze</code> (FastAPI wrapper around analyze_docx.py).
             </p>
+            <div className="subscription-card" style={{ marginTop: 18 }}>
+              <h4 style={{ marginBottom: 12 }}>💳 Subscribe with UPI</h4>
+              <form onSubmit={handleSubscribe} className="subscription-form">
+                <div className="payment-options" style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+                  <label className="payment-option">
+                    <input
+                      type="radio"
+                      name="payment_method"
+                      value="google_pay"
+                      checked={paymentMethod === 'google_pay'}
+                      onChange={(e) => setPaymentMethod(e.target.value)}
+                    />
+                    <span>Google Pay</span>
+                  </label>
+                  <label className="payment-option">
+                    <input
+                      type="radio"
+                      name="payment_method"
+                      value="phonepe"
+                      checked={paymentMethod === 'phonepe'}
+                      onChange={(e) => setPaymentMethod(e.target.value)}
+                    />
+                    <span>PhonePe</span>
+                  </label>
+                </div>
+
+                {paymentMethod === 'phonepe' && (
+                  <input
+                    type="tel"
+                    className="payment-input"
+                    placeholder="Enter phone number"
+                    value={phoneNumber}
+                    onChange={(e) => setPhoneNumber(e.target.value)}
+                    style={{ marginBottom: 12 }}
+                  />
+                )}
+
+                <button type="submit" className="btn-submit" disabled={subscribing}>
+                  {subscribing ? 'Processing…' : 'Subscribe Now'}
+                </button>
+              </form>
+              {subscriptionStatus && (
+                <p style={{ marginTop: 12, color: '#15803d', fontWeight: 700 }}>
+                  {subscriptionStatus.message}
+                </p>
+              )}
+            </div>
             {externalError && (
               <p style={{ marginTop: 8, color: '#b91c1c', fontWeight: 700 }}>
                 External API error: {externalError}
