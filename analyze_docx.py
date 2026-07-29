@@ -11,6 +11,8 @@ import os
 import sys
 import json
 import argparse
+import re
+from collections import Counter
 from docx import Document
 from html import escape
 import math
@@ -117,6 +119,84 @@ def analyze(paragraphs, use_openai=False):
             'reason': reason,
         })
     return results
+
+
+def normalize_text_for_plagiarism(text):
+    cleaned = re.sub(r'[^A-Za-z0-9\s]', ' ', text.lower())
+    return [token for token in cleaned.split() if token]
+
+
+def make_ngrams(tokens, size=5):
+    return [' '.join(tokens[i:i+size]) for i in range(len(tokens) - size + 1)]
+
+
+def plagiarism_score(text, all_texts):
+    tokens = normalize_text_for_plagiarism(text)
+    if not tokens:
+        return 0.0
+
+    all_tokens = [normalize_text_for_plagiarism(other) for other in all_texts]
+    all_ngrams = Counter()
+    for token_list in all_tokens:
+        all_ngrams.update(make_ngrams(token_list, size=5))
+
+    ngrams = make_ngrams(tokens, size=5)
+    duplicate_ngrams = sum(1 for gram in ngrams if gram and all_ngrams[gram] > 1)
+    ngram_ratio = duplicate_ngrams / max(1, len(ngrams))
+
+    sentences = [s.strip() for s in re.split(r'[.!?]', text) if s.strip()]
+    all_sentences = [s.strip().lower() for other in all_texts for s in re.split(r'[.!?]', other) if s.strip()]
+    repeated_sentences = sum(1 for s in sentences if all_sentences.count(s.lower()) > 1)
+    sentence_ratio = repeated_sentences / max(1, len(sentences))
+
+    score = ngram_ratio * 90 + min(1.0, sentence_ratio * 1.5) * 40
+    score = max(0, min(100, score))
+    return round(score, 1)
+
+
+def plagiarism_label(score):
+    if score >= 60:
+        return 'High'
+    if score >= 35:
+        return 'Medium'
+    return 'Low'
+
+
+def plagiarism_analyze(paragraphs):
+    all_texts = [p['text'] for p in paragraphs]
+    results = []
+    for p in paragraphs:
+        score = plagiarism_score(p['text'], all_texts)
+        label = plagiarism_label(score)
+        reason = (
+            'High duplicate content found inside document.' if score >= 60 else
+            'Some repeated phrasing suggests possible plagiarism.' if score >= 35 else
+            'Low internal duplication detected.'
+        )
+        results.append({
+            'index': p['index'],
+            'text': p['text'],
+            'length': p['length'],
+            'score': score,
+            'label': label,
+            'reason': reason,
+            'plagiarism_score': score,
+            'plagiarism_label': label,
+        })
+    return results
+
+
+def plagiarism_aggregate(results):
+    total_chars = sum(r['length'] for r in results) or 1
+    weighted = sum(r['score'] * (r['length'] / total_chars) for r in results)
+    overall = round(weighted, 1)
+    label = plagiarism_label(overall)
+    return {
+        'overall_score': overall,
+        'plagiarism_score': overall,
+        'plagiarism_label': label,
+        'high_spots': [r for r in results if r['score'] >= 60],
+    }
 
 
 def aggregate(results):

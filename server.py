@@ -4,13 +4,20 @@ import time
 import requests
 from tempfile import NamedTemporaryFile
 from typing import Any, Dict, List, Optional
+import uuid
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from analyze_docx import analyze, aggregate, load_paragraphs
+from analyze_docx import (
+    analyze,
+    aggregate,
+    load_paragraphs,
+    plagiarism_analyze,
+    plagiarism_aggregate,
+)
 
 app = FastAPI(
     title="AI Plag Analyzer Backend",
@@ -19,11 +26,39 @@ app = FastAPI(
 
 ALLOWED_PAYMENT_METHODS = {"google_pay", "phonepe"}
 
+ADMIN_USERNAME = os.getenv('ADMIN_USERNAME', 'admin')
+ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', 'admin123')
+ADMIN_SESSION_TOKENS: Dict[str, Dict[str, Any]] = {}
+PAYMENT_EVENTS: List[Dict[str, Any]] = []
+USERS: Dict[str, Dict[str, Any]] = {}
+
 
 class SubscribeRequest(BaseModel):
     plan: str = "pro"
     payment_method: str
     phone_number: Optional[str] = None
+
+
+class AdminLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class PaymentConfirmRequest(BaseModel):
+    payment_event_id: str
+    payment_id: str
+    status: str = "completed"
+
+
+class AdminLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class PaymentConfirmRequest(BaseModel):
+    payment_event_id: str
+    payment_id: str
+    status: str = "completed"
 
 
 app.add_middleware(
@@ -48,6 +83,29 @@ def cleanup_temp_file(path: str) -> None:
         os.remove(path)
     except OSError:
         pass
+
+
+def create_payment_event(plan: str, payment_method: str, provider: str, order_id: str, phone_number: Optional[str] = None) -> Dict[str, Any]:
+    event = {
+        "id": str(uuid.uuid4()),
+        "plan": plan,
+        "payment_method": payment_method,
+        "provider": provider,
+        "order_id": order_id,
+        "phone_number": phone_number,
+        "status": "pending",
+        "message": "Payment requested by user.",
+        "created_at": int(time.time()),
+    }
+    PAYMENT_EVENTS.append(event)
+    return event
+
+
+def admin_authorized(authorization: Optional[str]) -> bool:
+    if not authorization:
+        return False
+    token = authorization.replace("Bearer ", "", 1)
+    return token in ADMIN_SESSION_TOKENS
 
 
 def create_razorpay_order(amount: int, receipt: str) -> Optional[Dict[str, Any]]:
@@ -102,6 +160,90 @@ def send_text_to_external_api(text: str) -> Optional[Dict[str, Any]]:
     response = requests.post(api_url, json=body, headers=headers, timeout=30)
     response.raise_for_status()
     return response.json()
+
+
+@app.post("/admin/login")
+def admin_login(payload: AdminLoginRequest):
+    if payload.username != ADMIN_USERNAME or payload.password != ADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="Invalid admin credentials")
+
+    token = str(uuid.uuid4())
+    ADMIN_SESSION_TOKENS[token] = {
+        "username": payload.username,
+        "created_at": int(time.time()),
+    }
+    return {
+        "status": "success",
+        "token": token,
+        "message": "Admin login successful.",
+    }
+
+
+class SignupRequest(BaseModel):
+    username: str
+    password: str
+    email: Optional[str] = None
+
+
+class SigninRequest(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/signup")
+def signup(payload: SignupRequest):
+    if not payload.username or not payload.password:
+        raise HTTPException(status_code=400, detail="username and password are required")
+    if payload.username in USERS:
+        raise HTTPException(status_code=400, detail="User already exists")
+
+    token = str(uuid.uuid4())
+    USERS[payload.username] = {
+        "username": payload.username,
+        "email": payload.email,
+        "password": payload.password,
+        "token": token,
+        "created_at": int(time.time()),
+    }
+
+    return {"status": "success", "message": "User created", "token": token}
+
+
+@app.post("/signin")
+def signin(payload: SigninRequest):
+    user = USERS.get(payload.username)
+    if not user or user.get("password") != payload.password:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    # issue a fresh token
+    token = str(uuid.uuid4())
+    user["token"] = token
+    return {"status": "success", "token": token, "username": user.get("username")}
+
+
+@app.get("/admin/payments")
+def admin_payments(authorization: Optional[str] = Header(None)):
+    if not admin_authorized(authorization):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return {"status": "success", "payments": PAYMENT_EVENTS}
+
+
+@app.post("/payment-confirm")
+def payment_confirm(payload: PaymentConfirmRequest):
+    target = next((item for item in PAYMENT_EVENTS if item["id"] == payload.payment_event_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Payment event not found")
+
+    target["status"] = payload.status
+    target["payment_id"] = payload.payment_id
+    target["message"] = "Payment received and confirmed by the system."
+    target["confirmed_at"] = int(time.time())
+
+    return {
+        "status": "success",
+        "message": "Payment confirmed and admin notified.",
+        "payment_event": target,
+    }
 
 
 def extract_value(response: Dict[str, Any], paths: List[str]) -> Optional[Any]:
@@ -159,9 +301,15 @@ def analyze_info():
 
 
 @app.post("/analyze")
-async def analyze_document(file: UploadFile = File(...)):
+async def analyze_document(
+    file: UploadFile = File(...),
+    mode: str = Form('ai'),
+):
     if not file.filename.lower().endswith(".docx"):
         raise HTTPException(status_code=400, detail="Only .docx files are supported")
+
+    if mode not in {"ai", "plagiarism"}:
+        raise HTTPException(status_code=400, detail="Invalid analysis mode. Use ai or plagiarism.")
 
     file_bytes = await file.read()
     temp_path = write_temp_docx(file_bytes)
@@ -182,13 +330,17 @@ async def analyze_document(file: UploadFile = File(...)):
         except Exception as exc:
             external_error = str(exc)
 
-        heuristic_results = analyze(paragraphs, use_openai=False)
-        constructed_results = []
+        if mode == "plagiarism":
+            heuristic_results = plagiarism_analyze(paragraphs)
+        else:
+            heuristic_results = analyze(paragraphs, use_openai=False)
 
+        constructed_results = []
         external_items = external_data.get("items", []) if external_data else []
+
         for idx, paragraph in enumerate(heuristic_results):
             item_data = external_items[idx] if idx < len(external_items) else {}
-            score = item_data.get("ai_score")
+            score = item_data.get("plagiarism_score") if mode == "plagiarism" else item_data.get("ai_score")
             if score is None:
                 score = paragraph["score"]
 
@@ -197,18 +349,26 @@ async def analyze_document(file: UploadFile = File(...)):
                 "text": paragraph["text"],
                 "length": paragraph["length"],
                 "score": float(score),
-                "label": item_data.get("ai_label") or paragraph["label"],
+                "label": item_data.get("plagiarism_label") or item_data.get("ai_label") or paragraph["label"],
                 "reason": item_data.get("reason") or paragraph["reason"],
-                "plagiarism_score": item_data.get("plagiarism_score"),
+                "plagiarism_score": item_data.get("plagiarism_score") if mode == "plagiarism" else item_data.get("plagiarism_score"),
                 "plagiarism_label": item_data.get("plagiarism_label"),
             })
 
-        summary = {
-            "overall_score": external_data.get("ai_score") if external_data and external_data.get("ai_score") is not None else aggregate(heuristic_results)["overall_score"],
-            "plagiarism_score": external_data.get("plagiarism_score"),
-            "ai_label": external_data.get("ai_label"),
-            "plagiarism_label": external_data.get("plagiarism_label"),
-        }
+        if mode == "plagiarism":
+            summary = {
+                "overall_score": external_data.get("plagiarism_score") if external_data and external_data.get("plagiarism_score") is not None else plagiarism_aggregate(heuristic_results)["overall_score"],
+                "plagiarism_score": external_data.get("plagiarism_score") if external_data else plagiarism_aggregate(heuristic_results)["plagiarism_score"],
+                "plagiarism_label": external_data.get("plagiarism_label") if external_data else plagiarism_aggregate(heuristic_results)["plagiarism_label"],
+                "ai_label": external_data.get("ai_label") if external_data else None,
+            }
+        else:
+            summary = {
+                "overall_score": external_data.get("ai_score") if external_data and external_data.get("ai_score") is not None else aggregate(heuristic_results)["overall_score"],
+                "plagiarism_score": external_data.get("plagiarism_score") if external_data else None,
+                "ai_label": external_data.get("ai_label") if external_data else None,
+                "plagiarism_label": external_data.get("plagiarism_label") if external_data else None,
+            }
 
         return JSONResponse(
             content={

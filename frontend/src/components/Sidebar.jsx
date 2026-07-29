@@ -13,6 +13,7 @@ export default function Sidebar({ activeNav, setActiveNav }) {
           <button className={`nav-item ${activeNav==='upload'?'active':''}`} onClick={() => setActiveNav('upload')}>📤 Upload</button>
           <button className={`nav-item ${activeNav==='reports'?'active':''}`} onClick={() => setActiveNav('reports')}>📑 Reports</button>
           <button className={`nav-item ${activeNav==='profile'?'active':''}`} onClick={() => setActiveNav('profile')}>👤 Profile</button>
+          <button className={`nav-item ${activeNav==='login'?'active':''}`} onClick={() => setActiveNav('login')}>🔐 Sign In / Sign Up</button>
           <button className={`nav-item ${activeNav==='settings'?'active':''}`} onClick={() => setActiveNav('settings')}>⚙️ Settings</button>
           <button className={`nav-item ${activeNav==='help'?'active':''}`} onClick={() => setActiveNav('help')}>❓ Help</button>
         </nav>

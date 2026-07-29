@@ -39,11 +39,20 @@ npm install
 npm run dev
 ```
 
-5. Upload a `.docx` document through the frontend and inspect results.
+5. Upload a `.docx` document through the frontend, choose either AI Detection or Plagiarism Detection, and inspect results.
 
 6. If you only want to run the local analyzer without the external API, leave `ANALYSIS_API_URL` unset.
 
-7. Run the analyzer:
+7. Subscription plans are shown in the frontend. Current options:
+   - Free: 119 words
+   - Basic: 2999 words for ₹599/-
+   - Premium: 7999 words for ₹1499/-
+   - Premium Pro: 10000 words for ₹1999/-
+
+   Pay via UPI: `gogreensavepaper@ibl`
+   Terms and conditions apply. No profit business.
+
+8. Run the analyzer:
 
 ```powershell
 python analyze_docx.py input.docx --output report.html --json results.json

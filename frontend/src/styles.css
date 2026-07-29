@@ -739,6 +739,39 @@ body {
   box-shadow: 0 4px 12px rgba(37, 99, 235, 0.08);
 }
 
+.plan-selector {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.plan-card {
+  background: var(--bg-card);
+  border-radius: 16px;
+  border: 1px solid rgba(124, 58, 237, 0.18);
+  padding: 1.1rem;
+  transition: all 0.25s ease;
+  cursor: pointer;
+  text-align: left;
+  min-height: 120px;
+}
+
+.plan-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px rgba(124, 58, 237, 0.12);
+}
+
+.plan-card.active {
+  border-color: var(--primary);
+  background: rgba(124, 58, 237, 0.08);
+}
+
+.plan-card strong,
+.plan-card div {
+  display: block;
+}
+
 .payment-option {
   display: inline-flex;
   align-items: center;

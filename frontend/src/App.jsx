@@ -6,10 +6,24 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
+  const [analysisMode, setAnalysisMode] = useState('ai')
+  const [selectedPlan, setSelectedPlan] = useState('basic')
   const [paymentMethod, setPaymentMethod] = useState('google_pay')
   const [phoneNumber, setPhoneNumber] = useState('')
   const [subscriptionStatus, setSubscriptionStatus] = useState(null)
   const [subscribing, setSubscribing] = useState(false)
+  const [adminUsername, setAdminUsername] = useState('')
+  const [adminPassword, setAdminPassword] = useState('')
+  const [adminToken, setAdminToken] = useState(null)
+  const [adminPayments, setAdminPayments] = useState([])
+  const [adminLoading, setAdminLoading] = useState(false)
+  const [adminError, setAdminError] = useState(null)
+  const [authToken, setAuthToken] = useState(null)
+  const [authUsername, setAuthUsername] = useState('')
+  const [authEmail, setAuthEmail] = useState('')
+  const [authPassword, setAuthPassword] = useState('')
+  const [authMode, setAuthMode] = useState('signin')
+  const [authError, setAuthError] = useState(null)
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -21,6 +35,7 @@ export default function App() {
     try {
       const fd = new FormData()
       fd.append('file', file)
+      fd.append('mode', analysisMode)
 
       // Expects a backend POST /analyze that accepts multipart/form-data
       const res = await fetch('/analyze', {
@@ -82,7 +97,7 @@ export default function App() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          plan: 'pro',
+          plan: selectedPlan,
           payment_method: paymentMethod,
           phone_number: paymentMethod === 'phonepe' ? phoneNumber : undefined,
         }),
@@ -133,6 +148,112 @@ export default function App() {
     }
   }
 
+  const handleAdminLogin = async (e) => {
+    e.preventDefault()
+    setAdminLoading(true)
+    setAdminError(null)
+
+    try {
+      const res = await fetch('/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: adminUsername, password: adminPassword }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Login failed')
+      setAdminToken(data.token)
+      setAdminError(null)
+      setAdminUsername('')
+      setAdminPassword('')
+      await fetchAdminPayments(data.token)
+    } catch (err) {
+      setAdminError(err.message)
+    } finally {
+      setAdminLoading(false)
+    }
+  }
+
+  const fetchAdminPayments = async (token) => {
+    setAdminLoading(true)
+    setAdminError(null)
+    try {
+      const res = await fetch('/admin/payments', {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Could not fetch payments')
+      setAdminPayments(data.payments || [])
+    } catch (err) {
+      setAdminError(err.message)
+    } finally {
+      setAdminLoading(false)
+    }
+  }
+
+  const handleConfirmPayment = async (paymentEventId) => {
+    if (!adminToken) return
+    setAdminLoading(true)
+    setAdminError(null)
+    try {
+      const res = await fetch('/payment-confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payment_event_id: paymentEventId, payment_id: `pay_${Date.now()}` }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Confirmation failed')
+      await fetchAdminPayments(adminToken)
+    } catch (err) {
+      setAdminError(err.message)
+    } finally {
+      setAdminLoading(false)
+    }
+  }
+
+  const handleSignUp = async (e) => {
+    e.preventDefault()
+    setAuthError(null)
+    try {
+      const res = await fetch('/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: authUsername, password: authPassword, email: authEmail }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || data.message || 'Signup failed')
+      setAuthToken(data.token)
+      setAuthMode('signin')
+      setAuthError(null)
+      setAuthUsername('')
+      setAuthPassword('')
+      setAuthEmail('')
+      setActiveNav('upload')
+    } catch (err) {
+      setAuthError(err.message)
+    }
+  }
+
+  const handleSignIn = async (e) => {
+    e.preventDefault()
+    setAuthError(null)
+    try {
+      const res = await fetch('/signin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: authUsername, password: authPassword }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || data.message || 'Signin failed')
+      setAuthToken(data.token)
+      setAuthError(null)
+      setAuthUsername('')
+      setAuthPassword('')
+      setActiveNav('upload')
+    } catch (err) {
+      setAuthError(err.message)
+    }
+  }
+
   const getRiskLevel = (score) => {
     if (score >= 70) return { level: 'HIGH', color: '#dc2626' }
     if (score >= 50) return { level: 'MEDIUM', color: '#f97316' }
@@ -170,7 +291,105 @@ export default function App() {
         <main className="main">
           <div className="container">
             {/* Conditionally render views based on sidebar nav */}
-            {activeNav === 'profile' ? (
+            {activeNav === 'admin' ? (
+              <section className="details-section">
+                <h3>Admin Panel</h3>
+                {!adminToken ? (
+                  <form onSubmit={handleAdminLogin} style={{ display: 'grid', gap: 12, maxWidth: 420 }}>
+                    <label>
+                      Admin username
+                      <input
+                        type="text"
+                        value={adminUsername}
+                        onChange={(e) => setAdminUsername(e.target.value)}
+                        className="payment-input"
+                      />
+                    </label>
+                    <label>
+                      Password
+                      <input
+                        type="password"
+                        value={adminPassword}
+                        onChange={(e) => setAdminPassword(e.target.value)}
+                        className="payment-input"
+                      />
+                    </label>
+                    <button className="btn-submit" type="submit" disabled={adminLoading}>
+                      {adminLoading ? 'Logging in…' : 'Admin Login'}
+                    </button>
+                    {adminError && <p style={{ color: '#b91c1c' }}>{adminError}</p>}
+                  </form>
+                ) : (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+                      <div>
+                        <p>Logged in as <strong>admin</strong></p>
+                        <p style={{ color: 'var(--text-muted)' }}>View subscription payment activity.</p>
+                      </div>
+                      <button className="btn-secondary" onClick={() => { setAdminToken(null); setAdminPayments([]) }}>
+                        Logout
+                      </button>
+                    </div>
+                    {adminError && <p style={{ color: '#b91c1c' }}>{adminError}</p>}
+                    <div className="details-section" style={{ padding: '1.5rem' }}>
+                      <h4>Payment Events</h4>
+                      {adminLoading ? (
+                        <p>Loading…</p>
+                      ) : adminPayments.length === 0 ? (
+                        <p>No payment events yet.</p>
+                      ) : (
+                        <div style={{ display: 'grid', gap: 12 }}>
+                          {adminPayments.map((event, idx) => (
+                            <div key={idx} className="paragraph-item" style={{ borderLeftColor: '#7C3AED' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+                                <strong>{event.plan} — {event.status}</strong>
+                                {event.status !== 'completed' && (
+                                  <button className="btn-secondary" type="button" onClick={() => handleConfirmPayment(event.id)}>
+                                    Confirm
+                                  </button>
+                                )}
+                              </div>
+                              <div style={{ marginTop: 10, color: 'var(--text-muted)', fontSize: '0.95rem' }}>
+                                Order: {event.order_id}<br />
+                                Method: {event.payment_method}<br />
+                                Phone: {event.phone_number || 'n/a'}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </section>
+            ) : activeNav === 'login' ? (
+              <section className="auth-section">
+                <h3>{authMode === 'signin' ? 'Sign In' : 'Sign Up'}</h3>
+                <form onSubmit={authMode === 'signin' ? handleSignIn : handleSignUp} style={{ display: 'grid', gap: 12, maxWidth: 420 }}>
+                  {authMode === 'signup' && (
+                    <label>
+                      Email
+                      <input type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} className="payment-input" />
+                    </label>
+                  )}
+                  <label>
+                    Username
+                    <input type="text" value={authUsername} onChange={(e) => setAuthUsername(e.target.value)} className="payment-input" />
+                  </label>
+                  <label>
+                    Password
+                    <input type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} className="payment-input" />
+                  </label>
+                  <button className="btn-submit" type="submit">
+                    {authMode === 'signin' ? 'Sign In' : 'Create Account'}
+                  </button>
+                </form>
+                <div style={{ marginTop: 12 }}>
+                  <button className="btn-link" onClick={() => setAuthMode(authMode === 'signin' ? 'signup' : 'signin')}>{authMode === 'signin' ? 'Create an account' : 'Have an account? Sign in'}</button>
+                </div>
+                {authError && <p style={{ color: '#b91c1c' }}>{authError}</p>}
+              </section>
+            ) : activeNav === 'profile' ? (
               <section className="profile-view">
                 <div className="details-section">
                   <h3>Profile</h3>
@@ -193,6 +412,9 @@ export default function App() {
             <div className="upload-card">
               <div className="upload-icon">📄</div>
               <h2>Upload Document</h2>
+              <p style={{ marginBottom: '1rem', color: 'var(--text-muted)' }}>
+                Choose the analysis mode before uploading.
+              </p>
               <form onSubmit={handleSubmit}>
                 <label htmlFor="file-input" className="file-label">
                   <span className="file-input-text">
@@ -206,6 +428,28 @@ export default function App() {
                     className="file-input"
                   />
                 </label>
+                <div className="analysis-options" style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center', marginBottom: 16 }}>
+                  <label className="payment-option" style={{ cursor: 'pointer' }}>
+                    <input
+                      type="radio"
+                      name="analysis_mode"
+                      value="ai"
+                      checked={analysisMode === 'ai'}
+                      onChange={(e) => setAnalysisMode(e.target.value)}
+                    />
+                    <span>AI Detection</span>
+                  </label>
+                  <label className="payment-option" style={{ cursor: 'pointer' }}>
+                    <input
+                      type="radio"
+                      name="analysis_mode"
+                      value="plagiarism"
+                      checked={analysisMode === 'plagiarism'}
+                      onChange={(e) => setAnalysisMode(e.target.value)}
+                    />
+                    <span>Plagiarism Detection</span>
+                  </label>
+                </div>
                 <button type="submit" disabled={!file || loading} className="btn-submit">
                   {loading ? (
                     <>
@@ -237,7 +481,7 @@ export default function App() {
               {/* Overall Score Card */}
               <div className="score-card">
                 <div className="score-header">
-                  <h3>Overall AI Score</h3>
+                  <h3>{analysisMode === 'plagiarism' ? 'Overall Plagiarism Score' : 'Overall AI Score'}</h3>
                   <span className="score-badge">{overallScore}%</span>
                 </div>
                 <div className="score-bar-container">
@@ -336,7 +580,44 @@ export default function App() {
               Backend endpoint: <code>/analyze</code> (FastAPI wrapper around analyze_docx.py).
             </p>
             <div className="subscription-card" style={{ marginTop: 18 }}>
-              <h4 style={{ marginBottom: 12 }}>💳 Subscribe with UPI</h4>
+              <h4 style={{ marginBottom: 12 }}>💳 Subscription Plans</h4>
+              <div style={{ marginBottom: 18, padding: 16, borderRadius: 16, background: 'rgba(255,255,255,0.92)', border: '1px solid rgba(124,58,237,0.14)' }}>
+                <div style={{ marginBottom: 10, fontWeight: 700 }}>UPI ID</div>
+                <div style={{ marginBottom: 14, fontSize: '1.05rem', color: 'var(--primary-dark)', fontWeight: 800 }}>
+                  gogreensavepaper@ibl
+                </div>
+                <div style={{ color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                  Use the UPI ID above to pay for your selected plan. Your subscription is activated after payment confirmation.
+                </div>
+              </div>
+              <div className="plan-selector" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 18 }}>
+                {[
+                  { id: 'basic', title: 'Basic', description: '2999 words', price: '₹599/-' },
+                  { id: 'premium', title: 'Premium', description: '7999 words', price: '₹1499/-' },
+                  { id: 'premium_pro', title: 'Premium Pro', description: '10000 words', price: '₹1999/-' },
+                ].map((plan) => (
+                  <button
+                    key={plan.id}
+                    type="button"
+                    className={`plan-card ${selectedPlan === plan.id ? 'active' : ''}`}
+                    onClick={() => setSelectedPlan(plan.id)}
+                    style={{
+                      padding: '1rem',
+                      borderRadius: '16px',
+                      border: selectedPlan === plan.id ? '2px solid var(--primary)' : '1px solid rgba(124,58,237,0.18)',
+                      background: selectedPlan === plan.id ? 'rgba(124,58,237,0.1)' : 'white',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      minHeight: '120px',
+                      transition: 'all 0.2s ease',
+                    }}
+                  >
+                    <div style={{ fontSize: '1rem', fontWeight: 700, marginBottom: 6 }}>{plan.title}</div>
+                    <div style={{ color: 'var(--text-muted)', marginBottom: 14 }}>{plan.description}</div>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 800 }}>{plan.price}</div>
+                  </button>
+                ))}
+              </div>
               <form onSubmit={handleSubscribe} className="subscription-form">
                 <div className="payment-options" style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
                   <label className="payment-option">
@@ -373,7 +654,7 @@ export default function App() {
                 )}
 
                 <button type="submit" className="btn-submit" disabled={subscribing}>
-                  {subscribing ? 'Processing…' : 'Subscribe Now'}
+                  {subscribing ? 'Processing…' : `Subscribe to ${selectedPlan.replace('_', ' ').replace(/\b\w/g, (x) => x.toUpperCase())}`}
                 </button>
               </form>
               {subscriptionStatus && (
@@ -381,6 +662,9 @@ export default function App() {
                   {subscriptionStatus.message}
                 </p>
               )}
+              <p style={{ marginTop: 14, color: 'var(--text-muted)', fontSize: '0.9rem', lineHeight: 1.6 }}>
+                Terms and conditions apply. No profit business.
+              </p>
             </div>
             {externalError && (
               <p style={{ marginTop: 8, color: '#b91c1c', fontWeight: 700 }}>
@@ -400,7 +684,7 @@ export default function App() {
       </div>
 
       <footer className="footer">
-        <p>© 2024 AI Plag Detector • Protecting Academic Integrity</p>
+        <p>© 2026 AI Plag Detector • Protecting Academic Integrity</p>
       </footer>
     </div>
   )
