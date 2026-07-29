@@ -1,3 +1,4 @@
+import hashlib
 import os
 import json
 import time
@@ -10,6 +11,8 @@ from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from pymongo import MongoClient
+from pymongo.errors import PyMongoError
 
 from analyze_docx import (
     analyze,
@@ -31,6 +34,36 @@ ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', 'admin123')
 ADMIN_SESSION_TOKENS: Dict[str, Dict[str, Any]] = {}
 PAYMENT_EVENTS: List[Dict[str, Any]] = []
 USERS: Dict[str, Dict[str, Any]] = {}
+
+MONGODB_URI = os.getenv('MONGODB_URI')
+MONGODB_DB_NAME = os.getenv('MONGODB_DB', 'ai_plag_analyzer')
+mongo_client = None
+mongo_db = None
+
+if MONGODB_URI:
+    try:
+        mongo_client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
+        mongo_client.server_info()
+        mongo_db = mongo_client[MONGODB_DB_NAME]
+        mongo_db['users'].create_index('username', unique=True)
+    except PyMongoError:
+        mongo_client = None
+        mongo_db = None
+
+
+def get_user_collection():
+    return mongo_db['users'] if mongo_db else None
+
+
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
+
+
+def find_user(username: str) -> Optional[Dict[str, Any]]:
+    users = get_user_collection()
+    if users:
+        return users.find_one({'username': username})
+    return USERS.get(username)
 
 
 class SubscribeRequest(BaseModel):
@@ -194,30 +227,58 @@ class SigninRequest(BaseModel):
 def signup(payload: SignupRequest):
     if not payload.username or not payload.password:
         raise HTTPException(status_code=400, detail="username and password are required")
-    if payload.username in USERS:
-        raise HTTPException(status_code=400, detail="User already exists")
 
-    token = str(uuid.uuid4())
-    USERS[payload.username] = {
-        "username": payload.username,
-        "email": payload.email,
-        "password": payload.password,
-        "token": token,
-        "created_at": int(time.time()),
-    }
+    users = get_user_collection()
+    if users:
+        if users.find_one({'username': payload.username}):
+            raise HTTPException(status_code=400, detail="User already exists")
+        token = str(uuid.uuid4())
+        users.insert_one({
+            'username': payload.username,
+            'email': payload.email,
+            'password_hash': hash_password(payload.password),
+            'token': token,
+            'created_at': int(time.time()),
+        })
+    else:
+        if payload.username in USERS:
+            raise HTTPException(status_code=400, detail="User already exists")
+        token = str(uuid.uuid4())
+        USERS[payload.username] = {
+            'username': payload.username,
+            'email': payload.email,
+            'password': payload.password,
+            'token': token,
+            'created_at': int(time.time()),
+        }
 
     return {"status": "success", "message": "User created", "token": token}
 
 
 @app.post("/signin")
 def signin(payload: SigninRequest):
-    user = USERS.get(payload.username)
-    if not user or user.get("password") != payload.password:
+    if not payload.username or not payload.password:
+        raise HTTPException(status_code=400, detail="username and password are required")
+
+    user = find_user(payload.username)
+    if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    # issue a fresh token
+    password_hash = hash_password(payload.password)
+    expected_hash = user.get('password_hash')
+    if expected_hash:
+        if expected_hash != password_hash:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+    elif user.get('password') != payload.password:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
     token = str(uuid.uuid4())
-    user["token"] = token
+    users = get_user_collection()
+    if users:
+        users.update_one({'username': payload.username}, {'$set': {'token': token}})
+    else:
+        user['token'] = token
+
     return {"status": "success", "token": token, "username": user.get("username")}
 
 

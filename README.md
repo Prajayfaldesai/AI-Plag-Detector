@@ -18,6 +18,8 @@ pip install -r requirements.txt
 $env:ANALYSIS_API_URL = 'https://your-provider.com/analyze'
 $env:ANALYSIS_API_KEY = 'your-api-key'
 $env:OPENAI_API_KEY = 'sk-...'
+$env:MONGODB_URI = 'mongodb+srv://<db_username>:<db_password>@cluster0.sqpsljx.mongodb.net'
+$env:MONGODB_DB = 'ai_plag_analyzer'
 ```
 
 3. Install dependencies and run the backend server:
