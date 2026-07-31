@@ -1,6 +1,48 @@
 import React, { useState } from 'react'
 import Sidebar from './components/Sidebar'
 
+const getApiBaseUrl = () => {
+  const configured = import.meta.env.VITE_API_BASE_URL?.trim()
+  if (configured) return configured.replace(/\/$/, '')
+
+  if (typeof window !== 'undefined') {
+    const queryValue = new URLSearchParams(window.location.search).get('apiBaseUrl')?.trim()
+    if (queryValue) return queryValue.replace(/\/$/, '')
+
+    if (window.__API_BASE_URL__) {
+      return window.__API_BASE_URL__.toString().replace(/\/$/, '')
+    }
+  }
+
+  return ''
+}
+
+const buildApiUrl = (path) => {
+  const baseUrl = getApiBaseUrl()
+  if (!baseUrl) return path.startsWith('/') ? path : `/${path}`
+  return `${baseUrl}${path.startsWith('/') ? path : `/${path}`}`
+}
+
+const parseJsonResponse = async (res) => {
+  const text = await res.text()
+  if (!text) {
+    throw new Error(`The backend returned an empty response (${res.status}).`)
+  }
+
+  const contentType = res.headers.get('content-type') || ''
+  if (!contentType.includes('application/json') && !contentType.includes('+json')) {
+    throw new Error(
+      `The backend returned HTML instead of JSON. Set VITE_API_BASE_URL to your Railway backend URL, for example https://your-app.railway.app.`
+    )
+  }
+
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw new Error('The backend returned invalid JSON. Check the Railway deployment URL.')
+  }
+}
+
 export default function App() {
   const [file, setFile] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -37,8 +79,7 @@ export default function App() {
       fd.append('file', file)
       fd.append('mode', analysisMode)
 
-      // Expects a backend POST /analyze that accepts multipart/form-data
-      const res = await fetch('/analyze', {
+      const res = await fetch(buildApiUrl('/analyze'), {
         method: 'POST',
         body: fd,
       })
@@ -46,7 +87,7 @@ export default function App() {
         const body = await res.text()
         throw new Error(`Server error ${res.status}: ${body}`)
       }
-      const data = await res.json()
+      const data = await parseJsonResponse(res)
       setResult(data)
     } catch (err) {
       setError(err.message)
@@ -91,7 +132,7 @@ export default function App() {
     setSubscriptionStatus(null)
 
     try {
-      const res = await fetch('/subscribe', {
+      const res = await fetch(buildApiUrl('/subscribe'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -103,7 +144,7 @@ export default function App() {
         }),
       })
 
-      const data = await res.json()
+      const data = await parseJsonResponse(res)
       if (!res.ok) {
         throw new Error(data.detail || 'Subscription request failed')
       }
@@ -154,12 +195,12 @@ export default function App() {
     setAdminError(null)
 
     try {
-      const res = await fetch('/admin/login', {
+      const res = await fetch(buildApiUrl('/admin/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: adminUsername, password: adminPassword }),
       })
-      const data = await res.json()
+      const data = await parseJsonResponse(res)
       if (!res.ok) throw new Error(data.detail || 'Login failed')
       setAdminToken(data.token)
       setAdminError(null)
@@ -177,10 +218,10 @@ export default function App() {
     setAdminLoading(true)
     setAdminError(null)
     try {
-      const res = await fetch('/admin/payments', {
+      const res = await fetch(buildApiUrl('/admin/payments'), {
         headers: { Authorization: `Bearer ${token}` },
       })
-      const data = await res.json()
+      const data = await parseJsonResponse(res)
       if (!res.ok) throw new Error(data.detail || 'Could not fetch payments')
       setAdminPayments(data.payments || [])
     } catch (err) {
@@ -195,12 +236,12 @@ export default function App() {
     setAdminLoading(true)
     setAdminError(null)
     try {
-      const res = await fetch('/payment-confirm', {
+      const res = await fetch(buildApiUrl('/payment-confirm'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ payment_event_id: paymentEventId, payment_id: `pay_${Date.now()}` }),
       })
-      const data = await res.json()
+      const data = await parseJsonResponse(res)
       if (!res.ok) throw new Error(data.detail || 'Confirmation failed')
       await fetchAdminPayments(adminToken)
     } catch (err) {
@@ -214,12 +255,12 @@ export default function App() {
     e.preventDefault()
     setAuthError(null)
     try {
-      const res = await fetch('/signup', {
+      const res = await fetch(buildApiUrl('/signup'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: authUsername, password: authPassword, email: authEmail }),
       })
-      const data = await res.json()
+      const data = await parseJsonResponse(res)
       if (!res.ok) throw new Error(data.detail || data.message || 'Signup failed')
       setAuthToken(data.token)
       setAuthMode('signin')
@@ -237,12 +278,12 @@ export default function App() {
     e.preventDefault()
     setAuthError(null)
     try {
-      const res = await fetch('/signin', {
+      const res = await fetch(buildApiUrl('/signin'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: authUsername, password: authPassword }),
       })
-      const data = await res.json()
+      const data = await parseJsonResponse(res)
       if (!res.ok) throw new Error(data.detail || data.message || 'Signin failed')
       setAuthToken(data.token)
       setAuthError(null)
