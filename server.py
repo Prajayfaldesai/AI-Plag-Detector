@@ -35,24 +35,24 @@ ADMIN_SESSION_TOKENS: Dict[str, Dict[str, Any]] = {}
 PAYMENT_EVENTS: List[Dict[str, Any]] = []
 USERS: Dict[str, Dict[str, Any]] = {}
 
-MONGODB_URI = os.getenv('MONGODB_URI')
+DEFAULT_MONGODB_URI = 'mongodb+srv://prajayfaldesai987_db_user:hGsIgjrHhhZV0A2X@cluster0.6agqfbt.mongodb.net/?appName=Cluster0'
+MONGODB_URI = os.getenv('MONGODB_URI', DEFAULT_MONGODB_URI)
 MONGODB_DB_NAME = os.getenv('MONGODB_DB', 'ai_plag_analyzer')
 mongo_client = None
 mongo_db = None
 
-if MONGODB_URI:
-    try:
-        mongo_client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
-        mongo_client.server_info()
-        mongo_db = mongo_client[MONGODB_DB_NAME]
-        mongo_db['users'].create_index('username', unique=True)
-    except PyMongoError:
-        mongo_client = None
-        mongo_db = None
+try:
+    mongo_client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
+    mongo_client.server_info()
+    mongo_db = mongo_client[MONGODB_DB_NAME]
+    mongo_db['users'].create_index('username', unique=True)
+except PyMongoError:
+    mongo_client = None
+    mongo_db = None
 
 
 def get_user_collection():
-    return mongo_db['users'] if mongo_db else None
+    return mongo_db['users'] if mongo_db is not None else None
 
 
 def hash_password(password: str) -> str:
@@ -61,9 +61,30 @@ def hash_password(password: str) -> str:
 
 def find_user(username: str) -> Optional[Dict[str, Any]]:
     users = get_user_collection()
-    if users:
+    if users is not None:
         return users.find_one({'username': username})
     return USERS.get(username)
+
+
+def find_user_by_token(token: str) -> Optional[Dict[str, Any]]:
+    users = get_user_collection()
+    if users is not None:
+        return users.find_one({'token': token})
+    for user in USERS.values():
+        if user.get('token') == token:
+            return user
+    return None
+
+
+def serialize_user(user: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not user:
+        return None
+    return {
+        'username': user.get('username'),
+        'email': user.get('email'),
+        'token': user.get('token'),
+        'created_at': user.get('created_at'),
+    }
 
 
 class SubscribeRequest(BaseModel):
@@ -229,7 +250,7 @@ def signup(payload: SignupRequest):
         raise HTTPException(status_code=400, detail="username and password are required")
 
     users = get_user_collection()
-    if users:
+    if users is not None:
         if users.find_one({'username': payload.username}):
             raise HTTPException(status_code=400, detail="User already exists")
         token = str(uuid.uuid4())
@@ -252,7 +273,17 @@ def signup(payload: SignupRequest):
             'created_at': int(time.time()),
         }
 
-    return {"status": "success", "message": "User created", "token": token}
+    return {
+        "status": "success",
+        "message": "User created successfully",
+        "token": token,
+        "user": serialize_user({
+            'username': payload.username,
+            'email': payload.email,
+            'token': token,
+            'created_at': int(time.time()),
+        }),
+    }
 
 
 @app.post("/signin")
@@ -273,13 +304,33 @@ def signin(payload: SigninRequest):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     token = str(uuid.uuid4())
+    user['token'] = token
     users = get_user_collection()
-    if users:
+    if users is not None:
         users.update_one({'username': payload.username}, {'$set': {'token': token}})
     else:
         user['token'] = token
 
-    return {"status": "success", "token": token, "username": user.get("username")}
+    return {
+        "status": "success",
+        "message": "Login successful",
+        "token": token,
+        "username": user.get("username"),
+        "user": serialize_user(user),
+    }
+
+
+@app.get("/profile")
+def profile(authorization: Optional[str] = Header(None)):
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization header is required")
+
+    token = authorization.replace("Bearer ", "", 1)
+    user = find_user_by_token(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    return {"status": "success", "message": "Profile loaded", "user": serialize_user(user)}
 
 
 @app.get("/admin/payments")

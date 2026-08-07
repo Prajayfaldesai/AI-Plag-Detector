@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import Sidebar from './components/Sidebar'
 
 const getApiBaseUrl = () => {
@@ -60,12 +60,17 @@ export default function App() {
   const [adminPayments, setAdminPayments] = useState([])
   const [adminLoading, setAdminLoading] = useState(false)
   const [adminError, setAdminError] = useState(null)
-  const [authToken, setAuthToken] = useState(null)
+  const [authToken, setAuthToken] = useState(() => {
+    if (typeof window === 'undefined') return null
+    return window.localStorage.getItem('authToken')
+  })
   const [authUsername, setAuthUsername] = useState('')
   const [authEmail, setAuthEmail] = useState('')
   const [authPassword, setAuthPassword] = useState('')
   const [authMode, setAuthMode] = useState('signin')
   const [authError, setAuthError] = useState(null)
+  const [authMessage, setAuthMessage] = useState('')
+  const [authUser, setAuthUser] = useState(null)
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -263,12 +268,14 @@ export default function App() {
       const data = await parseJsonResponse(res)
       if (!res.ok) throw new Error(data.detail || data.message || 'Signup failed')
       setAuthToken(data.token)
+      setAuthUser(data.user || { username: authUsername, email: authEmail })
       setAuthMode('signin')
       setAuthError(null)
+      setAuthMessage(data.message || 'Account created successfully')
       setAuthUsername('')
       setAuthPassword('')
       setAuthEmail('')
-      setActiveNav('upload')
+      setActiveNav('profile')
     } catch (err) {
       setAuthError(err.message)
     }
@@ -286,10 +293,12 @@ export default function App() {
       const data = await parseJsonResponse(res)
       if (!res.ok) throw new Error(data.detail || data.message || 'Signin failed')
       setAuthToken(data.token)
+      setAuthUser(data.user || { username: authUsername })
       setAuthError(null)
+      setAuthMessage(data.message || 'Login successful')
       setAuthUsername('')
       setAuthPassword('')
-      setActiveNav('upload')
+      setActiveNav('profile')
     } catch (err) {
       setAuthError(err.message)
     }
@@ -316,6 +325,34 @@ export default function App() {
   const externalSource = result?.external_source
 
   const [activeNav, setActiveNav] = useState('upload')
+
+  const loadUserProfile = async (token) => {
+    if (!token) return
+    try {
+      const res = await fetch(buildApiUrl('/profile'), {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const data = await parseJsonResponse(res)
+      if (!res.ok) throw new Error(data.detail || 'Unable to load profile')
+      setAuthUser(data.user || null)
+      if (data.user?.username) {
+        setAuthUsername('')
+        setAuthPassword('')
+      }
+    } catch (err) {
+      setAuthError(err.message)
+    }
+  }
+
+  useEffect(() => {
+    if (authToken) {
+      window.localStorage.setItem('authToken', authToken)
+      loadUserProfile(authToken)
+    } else {
+      window.localStorage.removeItem('authToken')
+      setAuthUser(null)
+    }
+  }, [authToken])
 
   return (
     <div className="app">
@@ -429,16 +466,18 @@ export default function App() {
                   <button className="btn-link" onClick={() => setAuthMode(authMode === 'signin' ? 'signup' : 'signin')}>{authMode === 'signin' ? 'Create an account' : 'Have an account? Sign in'}</button>
                 </div>
                 {authError && <p style={{ color: '#b91c1c' }}>{authError}</p>}
+                {authMessage && <p style={{ color: '#15803d' }}>{authMessage}</p>}
               </section>
             ) : activeNav === 'profile' ? (
               <section className="profile-view">
                 <div className="details-section">
                   <h3>Profile</h3>
                   <div style={{ display: 'flex', gap: 20, alignItems: 'center' }}>
-                    <div className="avatar" style={{ width: 96, height: 96, fontSize: 28 }}>AP</div>
+                    <div className="avatar" style={{ width: 96, height: 96, fontSize: 28 }}>{(authUser?.username || 'U').slice(0, 2).toUpperCase()}</div>
                     <div>
-                      <div style={{ fontSize: 20, fontWeight: 800 }}>Alex Parker</div>
-                      <div style={{ color: 'var(--text-muted)', marginTop: 6 }}>Researcher • University</div>
+                      <div style={{ fontSize: 20, fontWeight: 800 }}>{authUser?.username || 'Your Profile'}</div>
+                      <div style={{ color: 'var(--text-muted)', marginTop: 6 }}>{authUser?.email || 'No email provided yet'}</div>
+                      {authMessage && <div style={{ marginTop: 8, color: '#15803d' }}>{authMessage}</div>}
                       <div style={{ marginTop: 12 }}>
                         <button className="btn-secondary">Edit Profile</button>
                       </div>
